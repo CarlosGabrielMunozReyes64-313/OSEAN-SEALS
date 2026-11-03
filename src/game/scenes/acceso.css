@@ -1,0 +1,10 @@
+.acceso-foca { box-sizing:border-box; overflow:auto; background:#0c2845; color:#fff3d6; padding:12px; border-radius:8px; font:16px system-ui,sans-serif }
+.acceso-foca h1 { margin:0 0 8px; color:#ffe1a0 }
+.acceso-foca label, .acceso-foca output { display:block; margin:5px 0 }
+.acceso-foca label[hidden] { display:none }
+.acceso-foca input,.acceso-foca button { box-sizing:border-box; width:100%; padding:7px; border:1px solid #caa862; border-radius:5px; font:inherit }
+.acceso-foca button { margin-top:7px; background:#f7d78b; color:#102944; cursor:pointer }
+.acceso-foca button[type=button] { color:#ffe1a0; background:transparent; border:0; text-decoration:underline }
+.aviso-plaza { position:absolute; inset:0; z-index:20; display:grid; place-content:center; justify-items:center; gap:12px; background:#081c34cc; color:white; font:20px system-ui; text-align:center }
+.aviso-plaza[hidden], .aviso-plaza button[hidden] { display:none }
+.aviso-plaza button { padding:8px 18px; border-radius:6px; background:#ffe1a0; cursor:pointer }

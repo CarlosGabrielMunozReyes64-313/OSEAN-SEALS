@@ -1,3 +1,4 @@
+import { Acceso } from './scenes/Acceso';
 import { VentanaColores } from './ui/VentanaColores';
 import { Boot } from './scenes/Boot';
 import { GameOver } from './scenes/GameOver';
@@ -21,6 +22,7 @@ const config: Phaser.Types.Core.GameConfig = {
     scene: [
         Boot,
         Preloader,
+        Acceso,
         MainMenu,
         MainGame,
         GameOver,

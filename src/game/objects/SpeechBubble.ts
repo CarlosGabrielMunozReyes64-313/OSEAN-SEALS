@@ -18,7 +18,7 @@ export class SpeechBubble extends GameObjects.Container {
         this.setDepth(owner.depth + 1);
 
         // La punta queda anclada al borde superior de esta foca.
-        const follow = () => this.setPosition(owner.x, owner.getTopCenter().y - 2);
+        const follow = () => this.setDepth(owner.depth + 0.2).setPosition(owner.x, owner.getTopCenter().y - 2);
         follow();
         scene.events.on('postupdate', follow);
         scene.tweens.add({

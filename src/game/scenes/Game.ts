@@ -1,93 +1,186 @@
-import { cargarColor } from '../services/datosJugador';
-import { ChatBar } from '../ui/ChatBar';
-import { Scene, Input, Math as PhaserMath } from 'phaser';
+import { Scene, Input, Math as M } from 'phaser';
+import { Callbacks } from '@colyseus/sdk';
 import { Player, PLAYER_SPEED } from '../objects/Player';
+import { entrarPlaza, cerrarSesion, codigo, mensaje, type Sala, type Jugador, type Chat, type Expulsion } from '../red';
+import { perfil } from '../services/datosJugador';
+
+const ANCHO = 1280, ALTO = 720;
 
 export class Game extends Scene {
+    private sala?: Sala;
+    private local?: Player;
+    private focas = new Map<string, { sprite: Player; estado: Jugador }>();
+    private keys!: Record<string, Input.Keyboard.Key>;
+    private destino?: M.Vector2;
     private modal = false;
-    private chat: ChatBar;
-    private keys: Record<string, Input.Keyboard.Key>;
-    private player: Player;
-    private destination: PhaserMath.Vector2 | null = null;
+    private conectada = false;
+    private andando = false;
+    private ultimoEnvio = 0;
 
     constructor() { super('Game'); }
-
     create() {
-        const { width, height } = this.scale;
-        const background = this.add.image(0, 0, 'background').setAlpha(0.5);
-        this.add.text(20, 16, 'Clic o WASD para caminar · Enter para hablar');
-        this.player = new Player(this, width / 2, height / 2);
-        this.destination = null;
-        const keyboard = this.input.keyboard!;
-        this.keys = keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT') as typeof this.keys;
-        this.chat = new ChatBar(this, text => this.player.say(text), () => {
-            // Al empezar a escribir se cancela también el recorrido por clic.
-            keyboard.resetKeys();
-            this.destination = null;
-            this.player.move(0, 0);
-        });
-        this.player.setColor(cargarColor());
-        this.scene.launch('VentanaColores', {
-            player: this.player, chat: this.chat,
-            bloquear: (valor: boolean) => {
-                this.modal = valor;
-                keyboard.resetKeys();
-                this.destination = null;
-                this.player.move(0, 0);
-            }
-        });
-        this.events.once('shutdown', () => this.scene.stop('VentanaColores'));
-        const layout = () => {
+        let vigente = true;
+        this.modal = this.conectada = this.andando = false;
+        this.ultimoEnvio = 0;
+        this.destino = undefined;
+        const fondo = this.add.image(ANCHO / 2, ALTO / 2, 'background').setDisplaySize(ANCHO, ALTO);
+        this.physics.world.setBounds(0, 0, ANCHO, ALTO);
+        const ajustar = () => {
             const { width, height } = this.scale;
-            background.setPosition(width / 2, height / 2)
-                .setScale(Math.max(width / background.width, height / background.height));
-            this.physics.world.setBounds(0, 0, width, height);
-            const position = this.limitPoint(new PhaserMath.Vector2(this.player.x, this.player.y));
-            this.player.body!.reset(position.x, position.y);
-            if (this.destination) this.limitPoint(this.destination);
+            this.cameras.main.setZoom(Math.min(width / ANCHO, height / ALTO)).centerOn(fondo.x, fondo.y);
         };
-        layout();
-        this.scale.on('resize', layout);
-        this.events.once('shutdown', () => this.scale.off('resize', layout));
-        this.input.on('pointerdown', (pointer: Input.Pointer) => {
-            if (this.modal || this.chat.editing || pointer.button !== 0) return;
-            const point = pointer.positionToCamera(this.cameras.main) as PhaserMath.Vector2;
-            this.destination = this.limitPoint(point);
+        ajustar();
+        this.scale.on('resize', ajustar);
+        this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT', false) as typeof this.keys;
+        this.input.on('pointerdown', (p: Input.Pointer) => {
+            if (!this.puedeCaminar() || p.button !== 0 || !this.local) return;
+            const punto = p.positionToCamera(this.cameras.main) as M.Vector2;
+            const mx = this.local.displayWidth / 2, my = this.local.displayHeight / 2;
+            this.destino = punto.set(M.Clamp(punto.x, mx, ANCHO - mx), M.Clamp(punto.y, my, ALTO - my));
         });
+
+        // Este aviso pertenece a la pantalla y no a la cámara del mundo.
+        const aviso = document.createElement('div');
+        aviso.className = 'aviso-plaza';
+        const texto = document.createElement('span'), boton = document.createElement('button');
+        aviso.append(texto, boton);
+        this.game.canvas.parentElement!.appendChild(aviso);
+        const informar = (msg: string, accion?: string) => {
+            aviso.hidden = !msg;
+            texto.textContent = msg;
+            boton.hidden = !accion;
+            boton.textContent = accion ?? '';
+        };
+        boton.onclick = () => { boton.disabled = true; this.scene.restart(); };
+        informar('Entrando a la plaza…');
+        const salir = () => { const sala = this.sala; this.sala = undefined; if (sala) void sala.leave().catch(() => {}); };
+        window.addEventListener('pagehide', salir);
+        this.events.once('shutdown', () => {
+            vigente = false;
+            salir();
+            this.scene.stop('VentanaColores');
+            this.local = undefined;
+            this.focas.clear();
+            aviso.remove();
+            this.scale.off('resize', ajustar);
+            window.removeEventListener('pagehide', salir);
+        });
+        const conectar = async () => {
+            try {
+                const sala = await entrarPlaza();
+                if (!vigente) { void sala.leave(); return; }
+                this.sala = sala;
+                const actual = () => vigente && this.sala === sala;
+                const conexion = (activa: boolean) => {
+                    this.conectada = activa;
+                    this.detener();
+                    this.scene.get('VentanaColores').events.emit('conexion', activa);
+                };
+                this.conectada = true;
+                sala.onDrop(() => { if (actual()) { conexion(false); informar('Reconectando…'); } });
+                sala.onReconnect(() => { if (actual()) { conexion(true); informar(this.local ? '' : 'Entrando a la plaza…'); } });
+                sala.onLeave(() => {
+                    if (!actual()) return;
+                    conexion(false);
+                    this.sala = undefined;
+                    informar('Se cerró la conexión con la plaza.', 'Volver a entrar');
+                });
+                sala.onMessage('expulsado', (m: Expulsion) => {
+                    if (actual() && m.motivo === 'sesion_duplicada') {
+                        conexion(false);
+                        this.scene.start('MainMenu', { aviso: 'Entraste con tu cuenta desde otra ventana' });
+                    }
+                });
+                sala.onMessage('chat', (m: Chat) => { if (actual()) this.focas.get(m.sessionId)?.sprite.say(m.texto); });
+
+                const cb = Callbacks.get(sala);
+                cb.onAdd('jugadores', (estado, id) => {
+                    if (!actual()) return;
+                    const propia = id === sala.sessionId;
+                    const sprite = new Player(this, estado.x, estado.y, estado.nombre, propia);
+                    sprite.setColor(estado.color);
+                    sprite.animar(estado.direccion, false);
+                    this.focas.set(id, { sprite, estado });
+                    if (propia) {
+                        this.local = sprite;
+                        if (perfil) perfil.color = estado.color;
+                        informar('');
+                        this.scene.launch('VentanaColores', {
+                            player: sprite, conectado: () => this.conectada,
+                            pausa: () => this.detener(),
+                            bloquear: (v: boolean) => { this.modal = v; this.detener(); },
+                            enviarChat: (texto: string) => { if (this.conectada) sala.send('chat', texto); },
+                            enviarColor: (color: number) => { if (this.conectada) sala.send('color', color); }
+                        });
+                    }
+                    cb.onChange(estado, () => {
+                        if (!actual() || !sprite.active) return;
+                        sprite.setColor(estado.color);
+                        if (!propia) return;
+                        if (perfil) perfil.color = estado.color;
+                        if (Math.hypot(sprite.x - estado.x, sprite.y - estado.y) > 40) {
+                            sprite.body!.reset(estado.x, estado.y);
+                        }
+                    });
+                });
+                cb.onRemove('jugadores', (_, id) => {
+                    if (!actual()) return;
+                    this.focas.get(id)?.sprite.destroy();
+                    this.focas.delete(id);
+                    if (id === sala.sessionId) this.local = undefined;
+                });
+            } catch (error) {
+                if (!vigente) return;
+                if (['sesion_requerida', 'sesion_invalida', 'cuenta_suspendida'].includes(codigo(error))) {
+                    await cerrarSesion();
+                    if (vigente) this.scene.start('Acceso', { aviso: mensaje(error) });
+                } else informar(mensaje(error), 'Reintentar');
+            }
+        };
+        void conectar();
     }
 
-    // Usa siempre el tamaño actual, incluso si la ventana cambió durante la marcha.
-    private limitPoint(point: PhaserMath.Vector2) {
-        const { width, height } = this.scale;
-        const marginX = Math.min(this.player.displayWidth, width) / 2;
-        const marginY = Math.min(this.player.displayHeight, height) / 2;
-        return point.set(
-            PhaserMath.Clamp(point.x, marginX, width - marginX),
-            PhaserMath.Clamp(point.y, marginY, height - marginY)
-        );
+    private puedeCaminar() {
+        return this.conectada && !this.modal && !(document.activeElement instanceof HTMLInputElement);
     }
-
-    update() {
-        if (this.modal || this.chat.editing) return;
+    private detener() {
+        this.destino = undefined;
+        this.input.keyboard?.resetKeys();
+        this.local?.move(0, 0);
+        this.transmitir(false, this.time.now);
+    }
+    private transmitir(marcha: boolean, ahora: number) {
+        if (this.local && this.conectada && ((marcha && ahora - this.ultimoEnvio >= 100) || (!marcha && this.andando))) {
+            const { x, y, direccion } = this.local;
+            this.sala?.send('mover', { x, y, direccion });
+            this.ultimoEnvio = ahora;
+        }
+        this.andando = marcha;
+    }
+    update(ahora: number, delta: number) {
+        if (!this.conectada) return;
+        // Las remotas solo dibujan la réplica del servidor, sin cuerpos físicos.
+        for (const { sprite, estado } of this.focas.values()) {
+            if (sprite === this.local) continue;
+            const dx = estado.x - sprite.x, dy = estado.y - sprite.y;
+            const distancia = Math.hypot(dx, dy);
+            const factor = distancia < 0.5 ? 1 : 1 - Math.exp(-delta / 65);
+            sprite.setPosition(sprite.x + dx * factor, sprite.y + dy * factor);
+            sprite.animar(estado.direccion, distancia >= 0.5);
+        }
+        if (!this.local || !this.puedeCaminar()) return;
         const k = this.keys;
-        const x = Number(k.D.isDown || k.RIGHT.isDown) - Number(k.A.isDown || k.LEFT.isDown);
-        const y = Number(k.S.isDown || k.DOWN.isDown) - Number(k.W.isDown || k.UP.isDown);
-        if (x || y) this.destination = null;
-        if (!this.destination) {
-            this.player.move(x, y);
-            return;
+        let x = Number(k.D.isDown || k.RIGHT.isDown) - Number(k.A.isDown || k.LEFT.isDown);
+        let y = Number(k.S.isDown || k.DOWN.isDown) - Number(k.W.isDown || k.UP.isDown);
+        if (x || y) this.destino = undefined;
+        if (this.destino) {
+            x = this.destino.x - this.local.x; y = this.destino.y - this.local.y;
+            if (Math.hypot(x, y) <= PLAYER_SPEED / this.physics.world.fps) {
+                this.local.body!.reset(this.destino.x, this.destino.y);
+                this.destino = undefined; x = y = 0;
+            }
         }
-
-        const dx = this.destination.x - this.player.x;
-        const dy = this.destination.y - this.player.y;
-        // Si falta como máximo un paso físico, terminamos justo en el punto.
-        if (Math.hypot(dx, dy) <= PLAYER_SPEED / this.physics.world.fps) {
-            this.player.setPosition(this.destination.x, this.destination.y);
-            this.player.body!.reset(this.player.x, this.player.y);
-            this.destination = null;
-            this.player.move(0, 0);
-        } else {
-            this.player.move(dx, dy);
-        }
+        this.local.move(x, y);
+        this.transmitir(!!(x || y), ahora);
     }
 }

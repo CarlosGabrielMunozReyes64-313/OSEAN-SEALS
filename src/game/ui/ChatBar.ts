@@ -1,10 +1,5 @@
 import { GameObjects, Scene } from 'phaser';
 
-// Punto de entrada para el futuro filtro de palabras.
-export function filtrarMensaje(texto: string): string {
-    return texto;
-}
-
 export class ChatBar {
     private readonly input = document.createElement('input');
     private readonly bar: GameObjects.DOMElement;
@@ -74,12 +69,12 @@ export class ChatBar {
             if (event.key !== 'Enter' && event.key !== 'Escape') return;
             event.preventDefault();
             if (event.repeat) return;
-            const text = filtrarMensaje(field.value.trim()).trim();
+            const text = field.value.trim();
             if (event.key === 'Enter' && text) send(text);
             field.blur();
         });
         const open = (event: KeyboardEvent) => {
-            if (event.key === 'Enter' && !event.repeat && !event.isComposing && !this.editing) {
+            if (!field.disabled && event.key === 'Enter' && !event.repeat && !event.isComposing && !this.editing) {
                 event.preventDefault();
                 field.focus();
             }

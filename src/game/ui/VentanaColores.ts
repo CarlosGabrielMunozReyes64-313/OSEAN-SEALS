@@ -1,16 +1,21 @@
 import { Scene, GameObjects } from 'phaser';
 import { colores, GRIS } from '../config/colores';
 import { Player, SHEET } from '../objects/Player';
-import { guardarColor } from '../services/datosJugador';
+
 import { ChatBar } from './ChatBar';
 
-interface Datos { player: Player; chat: ChatBar; bloquear: (valor: boolean) => void }
+interface Datos { player: Player; enviarChat: (texto: string) => void; enviarColor: (color: number) => void; pausa: () => void; conectado: () => boolean; bloquear: (valor: boolean) => void }
 
 // Escena de interfaz: su cámara permanece fija aunque se mueva la del mundo.
 export class VentanaColores extends Scene {
     constructor() { super('VentanaColores'); }
 
-    create({ player, chat, bloquear }: Datos) {
+    create({ player, enviarChat, enviarColor, pausa, conectado, bloquear }: Datos) {
+        const chat = new ChatBar(this, enviarChat, pausa);
+        this.events.on('conexion', (activa: boolean) => {
+            chat.setDisponible(activa && !panel.visible);
+        });
+        this.events.once('shutdown', () => this.events.off('conexion'));
         const boton = this.add.image(0, 0, 'boton').setDisplaySize(48, 48).setTint(0xe4e4e4)
             .setInteractive({ useHandCursor: true });
         const camisa = this.add.image(0, 0, 'icono-camisa').setDisplaySize(30, 26);
@@ -38,8 +43,9 @@ export class VentanaColores extends Scene {
         const nombre = this.add.text(-110, 98, '', { fontSize: '17px', color: '#fff1cf' }).setOrigin(0.5);
         panel.add(nombre);
         const celdas: GameObjects.Image[] = [];
+        let seleccionado = player.getColor();
         const elegir = (valor: number) => {
-            player.setColor(valor);
+            seleccionado = valor;
             if (valor === GRIS) preview.clearTint();
             else preview.setTint(valor);
             nombre.setText(colores.find(c => c.valor === valor)?.nombre ?? '');
@@ -56,7 +62,7 @@ export class VentanaColores extends Scene {
             else tile.setAlpha(0.5);
         });
 
-        let anterior = player.getColor();
+
         const mostrar = (visible: boolean) => {
             panel.setVisible(visible);
             fondo.setVisible(visible);
@@ -64,21 +70,20 @@ export class VentanaColores extends Scene {
             boton.setVisible(!visible);
             camisa.setVisible(!visible);
             boton.input!.enabled = !visible;
-            chat.setDisponible(!visible);
+            chat.setDisponible(!visible && conectado());
             bloquear(visible);
         };
         const salir = (guardar: boolean) => {
             if (!panel.visible) return;
-            if (guardar) guardarColor(player.getColor());
-            else player.setColor(anterior);
+            if (guardar && conectado()) enviarColor(seleccionado);
             mostrar(false);
         };
         boton.on('pointerover', () => boton.clearTint());
         boton.on('pointerout', () => boton.setTint(0xe4e4e4));
         boton.on('pointerdown', () => boton.setTint(0x989898));
         boton.on('pointerup', () => {
-            anterior = player.getColor();
-            elegir(anterior);
+            if (!conectado()) return;
+            elegir(player.getColor());
             mostrar(true);
         });
         confirmar.on('pointerdown', () => salir(true));

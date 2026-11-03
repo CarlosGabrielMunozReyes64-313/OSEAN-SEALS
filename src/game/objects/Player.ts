@@ -19,7 +19,7 @@ export class Player extends Physics.Arcade.Sprite {
     private facing: Direction = 'abajo';
     private readonly motion = new PhaserMath.Vector2();
 
-    constructor(scene: Scene, x: number, y: number) {
+    constructor(scene: Scene, x: number, y: number, nombre: string, local: boolean) {
         const layered = scene.textures.exists('cuerpo') && scene.textures.exists('detalles');
         const hasSheet = !!SHEET.file && scene.textures.exists('foca');
         super(scene, x, y, layered ? 'cuerpo' : hasSheet ? 'foca' : '__WHITE');
@@ -56,8 +56,20 @@ export class Player extends Physics.Arcade.Sprite {
                 group.destroy();
             });
         }
-        scene.physics.add.existing(this);
-        this.setCollideWorldBounds(true);
+        if (local) {
+            scene.physics.add.existing(this);
+            this.setCollideWorldBounds(true);
+        }
+        const etiqueta = scene.add.text(x, y, nombre, {
+            fontSize: '13px', color: '#ffffff', stroke: '#10243a', strokeThickness: 3
+        }).setOrigin(0.5, 0);
+        const ordenar = () => {
+            this.setDepth(this.y);
+            etiqueta.setPosition(this.x, this.getBottomCenter().y - 5).setDepth(this.y + 0.1);
+        };
+        ordenar();
+        scene.events.on('postupdate', ordenar);
+        this.once('destroy', () => { scene.events.off('postupdate', ordenar); etiqueta.destroy(); });
         this.once('destroy', () => this.bubble?.destroy());
     }
 
@@ -81,17 +93,20 @@ export class Player extends Physics.Arcade.Sprite {
     move(x: number, y: number) {
         this.motion.set(x, y).normalize().scale(PLAYER_SPEED);
         this.setVelocity(this.motion.x, this.motion.y);
-        if (x === 0 && y === 0) {
-            if (this.texture.key !== '__WHITE') {
-                this.anims.stop();
-                this.setFrame(rows[this.facing] * SHEET.framesPerRow);
-            }
+        const direccion = x || y ? (Math.abs(x) >= Math.abs(y)
+            ? (x < 0 ? 'izquierda' : 'derecha') : (y < 0 ? 'arriba' : 'abajo')) : this.facing;
+        this.animar(direccion, !!(x || y));
+    }
+    get direccion() { return this.facing; }
+
+    animar(direccion: Direction, caminando: boolean) {
+        this.facing = direccion;
+        if (this.texture.key === '__WHITE') return;
+        if (!caminando) {
+            this.anims.stop();
+            this.setFrame(rows[direccion] * SHEET.framesPerRow);
             return;
         }
-        // Miramos hacia el eje dominante del recorrido; en un empate usamos el perfil.
-        this.facing = Math.abs(x) >= Math.abs(y)
-            ? (x < 0 ? 'izquierda' : 'derecha')
-            : (y < 0 ? 'arriba' : 'abajo');
         if (this.texture.key !== '__WHITE') this.play('foca-' + this.facing, true);
     }
 }
