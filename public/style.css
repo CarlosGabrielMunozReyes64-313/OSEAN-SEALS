@@ -13,3 +13,4 @@ body {
     justify-content: center;
     align-items: center;
 }
+.phaser-chat-input::placeholder { color: #eadab9; opacity: 0.85; }

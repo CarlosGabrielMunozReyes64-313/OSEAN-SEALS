@@ -1,3 +1,4 @@
+import { fitMenu } from '../menuLayout';
 import { Scene, GameObjects } from 'phaser';
 
 export class MainMenu extends Scene
@@ -14,6 +15,7 @@ export class MainMenu extends Scene
     create ()
     {
         this.background = this.add.image(512, 384, 'background');
+        fitMenu(this, this.background);
 
         this.logo = this.add.image(512, 300, 'logo');
 
